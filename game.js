@@ -35,13 +35,15 @@
 
   // ---------- 아이템 정의 ----------
   const TYPES = {
-    toast:     { img: 'bread_toast',     pts: 1,  good: true,  name: '식빵',   size: 74 },
-    croissant: { img: 'bread_croissant', pts: 3,  good: true,  name: '크루아상', size: 80 },
-    cake:      { img: 'bread_cake',      pts: 10, good: true,  name: '케이크', size: 88, bonus: true },
+    toast:     { img: 'bread_toast',     pts: 1,  miss: 1, good: true,  name: '식빵',   size: 74 },
+    croissant: { img: 'bread_croissant', pts: 3,  miss: 2, good: true,  name: '크루아상', size: 80 },
+    cake:      { img: 'bread_cake',      pts: 10, miss: 3, good: true,  name: '케이크', size: 88, bonus: true },
     burnt:     { img: 'bad_burnt',       good: false, size: 72 },
     moldy:     { img: 'bad_moldy',       good: false, size: 80 },
     alarm:     { img: 'bad_alarm',       good: false, size: 76 }
   };
+
+  const MISS_LIMIT = 10;   // 놓친 빵 감점이 이 값에 이르면 게임 끝
 
   // ---------- 소리 (Web Audio 합성) ----------
   const Sound = {
@@ -128,13 +130,13 @@
   // ---------- 게임 상태 ----------
   let state = 'loading';
   let best = loadBest();
-  let score, lives, items, particles, texts, elapsed, spawnTimer, tally, shake, overAt, newBest;
+  let score, penalty, endReason, lives, items, particles, texts, elapsed, spawnTimer, tally, shake, overAt, newBest;
   const player = { x: W / 2, y: H - 150, tx: W / 2, size: 150, face: 'dongle_normal', faceTimer: 0, pop: 0 };
   const keys = {};
   let titleT = 0;
 
   function reset() {
-    score = 0; lives = 3; items = []; particles = []; texts = []; elapsed = 0; spawnTimer = 0.6;
+    score = 0; penalty = 0; endReason = ''; lives = 3; items = []; particles = []; texts = []; elapsed = 0; spawnTimer = 0.6;
     tally = { toast: 0, croissant: 0, cake: 0 }; shake = 0; newBest = false;
     player.x = player.tx = W / 2; player.face = 'dongle_normal'; player.faceTimer = 0; player.pop = 0;
   }
@@ -145,8 +147,8 @@
     Sound.init(); reset(); state = 'play'; Sound.playBgm('game');
   }
 
-  function endGame() {
-    state = 'over'; overAt = performance.now();
+  function endGame(reason) {
+    endReason = reason; state = 'over'; overAt = performance.now();
     Sound.stopBgm(); Sound.over();
     if (score > best) { best = score; newBest = true; saveBest(best); }
   }
@@ -266,13 +268,18 @@
           Sound.bonk();
           particles.push({ bonk: true, x: ix, y: it.y, age: 0, life: 0.45 });
           floatText(ix, it.y - 20, t === TYPES.alarm ? '따르릉!' : '으악!', '#7a5a4a');
-          if (lives <= 0) { endGame(); break; }
+          if (lives <= 0) { endGame('heart'); break; }
         }
         continue;
       }
       if (it.y > H + 60) {
         items.splice(i, 1);
-        if (t.good) { Sound.miss(); if (player.face !== 'dongle_sad') setFace('dongle_sad', 0.4); }
+        if (t.good) {
+          penalty += t.miss; score = Math.max(0, score - t.miss);
+          Sound.miss(); if (player.face !== 'dongle_sad') setFace('dongle_sad', 0.5);
+          floatText(Math.max(70, Math.min(W - 70, it.x)), H - 60, '놓침 -' + t.miss, '#d9534f');
+          if (penalty >= MISS_LIMIT) { endGame('miss'); break; }
+        }
       }
     }
     updateFx(dt);
@@ -377,22 +384,23 @@
     drawImg('dongle_happy', W / 2, 430 + bob, 230);
     orbit.filter(o => Math.sin(o.a) >= 0).forEach(drawOrbit);
 
-    roundRect(50, 600, W - 100, 220, 26, 'rgba(255,255,255,.88)', '#efc59b');
+    roundRect(50, 600, W - 100, 236, 26, 'rgba(255,255,255,.88)', '#efc59b');
     text('받으면 점수', 150, 638, 26, '#8a5a3a', 'center', null);
     text('맞으면 하트 -1', 390, 638, 26, '#8a5a3a', 'center', null);
     [['bread_toast', '1점'], ['bread_croissant', '3점'], ['bread_cake', '10점']].forEach(([n, s], i) => {
       drawImg(n, 85 + i * 65, 700, 54); text(s, 85 + i * 65, 750, 22, '#e8892b', 'center', null);
     });
     ['bad_burnt', 'bad_moldy', 'bad_alarm'].forEach((n, i) => drawImg(n, 325 + i * 65, 700, 54));
-    ctx.strokeStyle = '#efc59b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(W / 2, 625); ctx.lineTo(W / 2, 780); ctx.stroke();
-    text('좌우로 끌어서 동글이를 움직이세요', W / 2, 795, 22, '#9b7a62', 'center', null);
+    ctx.strokeStyle = '#efc59b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(W / 2, 625); ctx.lineTo(W / 2, 765); ctx.stroke();
+    text('빵을 놓치면 감점, 감점 ' + MISS_LIMIT + '점이면 끝', W / 2, 787, 22, '#d9534f', 'center', null);
+    text('좌우로 끌어서 동글이를 움직이세요', W / 2, 815, 22, '#9b7a62', 'center', null);
 
     const pulse = 1 + Math.sin(titleT * 5) * 0.04;
-    ctx.save(); ctx.translate(W / 2, 880); ctx.scale(pulse, pulse);
-    roundRect(-150, -38, 300, 76, 38, '#ff8fb1', '#fff');
+    ctx.save(); ctx.translate(W / 2, 885); ctx.scale(pulse, pulse);
+    roundRect(-150, -36, 300, 72, 36, '#ff8fb1', '#fff');
     text('시작하기', 0, 2, 38, '#fff', 'center', null);
     ctx.restore();
-    if (best) text('최고 기록 ' + best + '점', W / 2, 940, 22, '#8a5a3a', 'center', '#fff', 6);
+    if (best) text('최고 기록 ' + best + '점', W / 2, 943, 22, '#8a5a3a', 'center', '#fff', 6);
     drawMute();
   }
 
@@ -424,6 +432,10 @@
     // HUD
     roundRect(16, 18, 190, 56, 20, 'rgba(255,255,255,.88)', '#efc59b');
     text(score + '점', 111, 48, 34, '#e8892b', 'center', null);
+    const k = Math.min(1, penalty / MISS_LIMIT);
+    roundRect(16, 84, 190, 30, 15, 'rgba(255,255,255,.88)', '#efc59b');
+    if (k > 0) roundRect(20, 88, 182 * k, 22, 11, k >= 0.7 ? '#ef6b6b' : '#f5a96b');
+    text('감점 ' + penalty + ' / ' + MISS_LIMIT, 111, 100, 20, '#7a4a32', 'center', 'rgba(255,255,255,.9)', 4);
     for (let i = 0; i < 3; i++) drawImg('ui_heart', 240 + i * 52, 46, 44, 0, i < lives ? 1 : 0.22);
     drawMute();
   }
@@ -431,7 +443,8 @@
   function drawOver() {
     cover('bg_game', 0.55);
     text('게임 끝', W / 2, 120, 76, '#ff7aa2', 'center', '#fff', 14);
-    drawImg('dongle_happy', W / 2, 270, 180);
+    text(endReason === 'miss' ? '빵을 너무 많이 놓쳤어요' : '하트를 모두 잃었어요', W / 2, 192, 30, '#8a5a3a', 'center', '#fff', 8);
+    drawImg(endReason === 'miss' ? 'dongle_sad' : 'dongle_happy', W / 2, 295, 150);
 
     roundRect(50, 380, W - 100, 420, 30, 'rgba(255,255,255,.93)', '#efc59b');
     text(score + '점', W / 2, 440, 64, '#e8892b', 'center', null);
